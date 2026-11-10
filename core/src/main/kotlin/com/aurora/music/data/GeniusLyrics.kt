@@ -273,12 +273,10 @@ class GeniusLyricsClient(
         if (titleScore == 0) return 0
         val wantedArtist = normalize(song.artist)
         val foundArtist = normalize(candidateArtist)
-        val artistScore = when {
-            wantedArtist.isBlank() || foundArtist.isBlank() -> 0
-            wantedArtist == foundArtist -> 100
-            wantedArtist.contains(foundArtist) || foundArtist.contains(wantedArtist) -> 65
-            else -> 0
-        }
+        val creditedArtists = (listOf(wantedArtist) + song.artist.split(
+            Regex("(?i),|;|&|\\||/|\\b(?:feat\\.?|ft\\.?|featuring|with)\\b|\\s+[x×]\\s+")
+        ).map(::normalize)).filter(String::isNotBlank).toSet()
+        val artistScore = if (foundArtist.isNotBlank() && foundArtist in creditedArtists) 100 else 0
         return titleScore + artistScore
     }
 
