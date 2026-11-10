@@ -395,13 +395,14 @@ class GeniusLyricsImporter(
             var notFound = songs.count { store.record(it.id)?.status == GeniusLyricsStatus.NOT_FOUND }
             var processed = found + notFound
             var failed = 0
+            var bytesStored = store.stats().bytes
             mutableProgress.value = GeniusImportProgress(
                 total = songs.size,
                 processed = processed,
                 found = found,
                 notFound = notFound,
                 failed = failed,
-                bytesStored = store.stats().bytes,
+                bytesStored = bytesStored,
                 running = true,
                 message = "Importing lyrics from Genius",
             )
@@ -411,13 +412,18 @@ class GeniusLyricsImporter(
                 mutableProgress.update { it.copy(currentTrack = song.artist + " — " + song.title) }
                 store.mark(song.id, GeniusLyricsStatus.PENDING)
                 when (val result = client.fetchAndStore(song, token)) {
-                    is GeniusFetchResult.Found -> { found++; processed++; consecutiveErrors = 0 }
+                    is GeniusFetchResult.Found -> {
+                        found++
+                        processed++
+                        bytesStored += result.lyrics.toByteArray(Charsets.UTF_8).size.toLong()
+                        consecutiveErrors = 0
+                    }
                     GeniusFetchResult.NotFound -> { notFound++; processed++; consecutiveErrors = 0 }
                     is GeniusFetchResult.RateLimited -> {
                         failed++; processed++
                         mutableProgress.update {
                             it.copy(processed = processed, found = found, notFound = notFound,
-                                failed = failed, bytesStored = store.stats().bytes,
+                                failed = failed, bytesStored = bytesStored,
                                 rateLimited = true, message = result.retryAfterSeconds?.let { seconds ->
                                     "Genius rate limit. Retry after " + seconds + " seconds."
                                 } ?: "Genius rate limit. Import stopped.")
@@ -428,7 +434,7 @@ class GeniusLyricsImporter(
                         failed++; processed++
                         mutableProgress.update {
                             it.copy(processed = processed, found = found, notFound = notFound,
-                                failed = failed, bytesStored = store.stats().bytes,
+                                failed = failed, bytesStored = bytesStored,
                                 blocked = true, message = "Genius refused the request (HTTP 403). Import stopped.")
                         }
                         return
@@ -441,7 +447,7 @@ class GeniusLyricsImporter(
                 }
                 mutableProgress.update {
                     it.copy(processed = processed, found = found, notFound = notFound,
-                        failed = failed, bytesStored = store.stats().bytes)
+                        failed = failed, bytesStored = bytesStored)
                 }
                 if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
                     mutableProgress.update { it.copy(message = "Import paused after repeated network errors.") }
