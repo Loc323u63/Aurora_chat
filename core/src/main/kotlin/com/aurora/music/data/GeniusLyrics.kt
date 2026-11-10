@@ -204,6 +204,10 @@ class GeniusLyricsClient(
                 return@withContext GeniusFetchResult.NotFound
             }
             if (page.code !in 200..299) throw IOException("Genius song page returned HTTP " + page.code)
+            if (isAccessChallenge(page.body)) {
+                store.mark(song.id, GeniusLyricsStatus.BLOCKED, candidate.url, "Genius returned an access challenge")
+                return@withContext GeniusFetchResult.Blocked
+            }
             val lyrics = extractLyrics(page.body)
             if (lyrics == null) {
                 store.mark(song.id, GeniusLyricsStatus.NOT_FOUND, candidate.url, "No lyrics container found on the page")
@@ -287,6 +291,12 @@ class GeniusLyricsClient(
         uri.scheme == "https" && uri.host?.lowercase() in setOf("genius.com", "www.genius.com")
             && uri.path.orEmpty().startsWith("/")
     }.getOrDefault(false)
+
+    private fun isAccessChallenge(html: String): Boolean {
+        val lower = html.lowercase()
+        return "captcha-container" in lower || "cf-challenge" in lower ||
+            "<title>access denied" in lower || "verify you are human" in lower
+    }
 
     private fun requestPage(url: String): Page {
         val request = Request.Builder().url(url).header("User-Agent", "Aurora Music").build()
