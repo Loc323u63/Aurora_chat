@@ -89,6 +89,10 @@ class GeniusLyricsStore(root: File) {
         entries[songId]?.status == GeniusLyricsStatus.SUCCESS && lyricsFile(songId).isFile
     }
 
+    fun hasLyrics(songId: String): Boolean = synchronized(lock) {
+        entries[songId]?.status == GeniusLyricsStatus.SUCCESS && lyricsFile(songId).isFile
+    }
+
     fun lyrics(songId: String): String? = synchronized(lock) {
         val record = entries[songId] ?: return@synchronized null
         if (record.status != GeniusLyricsStatus.SUCCESS) return@synchronized null
@@ -389,17 +393,21 @@ class GeniusLyricsImporter(
             val targets = songs.filter { song ->
                 when (store.record(song.id)?.status) {
                     GeniusLyricsStatus.SUCCESS -> !store.hasLyrics(song.id)
-                    GeniusLyricsStatus.NOT_FOUND, GeniusLyricsStatus.BLOCKED -> false
+                    GeniusLyricsStatus.NOT_FOUND -> false
                     else -> true
                 }
             }
-            val initialStats = store.stats()
+            var found = songs.count { store.hasLyrics(it.id) }
+            var notFound = songs.count { store.record(it.id)?.status == GeniusLyricsStatus.NOT_FOUND }
+            var processed = found + notFound
+            var failed = 0
             mutableProgress.value = GeniusImportProgress(
-                total = targets.size,
-                found = initialStats.success,
-                notFound = initialStats.notFound,
-                failed = initialStats.errors + initialStats.rateLimited + initialStats.blocked,
-                bytesStored = initialStats.bytes,
+                total = songs.size,
+                processed = processed,
+                found = found,
+                notFound = notFound,
+                failed = failed,
+                bytesStored = store.stats().bytes,
                 running = true,
                 message = "Importing lyrics from Genius",
             )
@@ -409,13 +417,13 @@ class GeniusLyricsImporter(
                 mutableProgress.update { it.copy(currentTrack = song.artist + " — " + song.title) }
                 store.mark(song.id, GeniusLyricsStatus.PENDING)
                 when (val result = client.fetchAndStore(song, token)) {
-                    is GeniusFetchResult.Found -> consecutiveErrors = 0
-                    GeniusFetchResult.NotFound -> consecutiveErrors = 0
+                    is GeniusFetchResult.Found -> { found++; processed++; consecutiveErrors = 0 }
+                    GeniusFetchResult.NotFound -> { notFound++; processed++; consecutiveErrors = 0 }
                     is GeniusFetchResult.RateLimited -> {
-                        val stats = store.stats()
+                        failed++; processed++
                         mutableProgress.update {
-                            it.copy(processed = index + 1, found = stats.success, notFound = stats.notFound,
-                                failed = stats.errors + stats.rateLimited + stats.blocked, bytesStored = stats.bytes,
+                            it.copy(processed = processed, found = found, notFound = notFound,
+                                failed = failed, bytesStored = store.stats().bytes,
                                 rateLimited = true, message = result.retryAfterSeconds?.let { seconds ->
                                     "Genius rate limit. Retry after " + seconds + " seconds."
                                 } ?: "Genius rate limit. Import stopped.")
@@ -423,10 +431,10 @@ class GeniusLyricsImporter(
                         return
                     }
                     GeniusFetchResult.Blocked -> {
-                        val stats = store.stats()
+                        failed++; processed++
                         mutableProgress.update {
-                            it.copy(processed = index + 1, found = stats.success, notFound = stats.notFound,
-                                failed = stats.errors + stats.rateLimited + stats.blocked, bytesStored = stats.bytes,
+                            it.copy(processed = processed, found = found, notFound = notFound,
+                                failed = failed, bytesStored = store.stats().bytes,
                                 blocked = true, message = "Genius refused the request (HTTP 403). Import stopped.")
                         }
                         return
@@ -435,12 +443,11 @@ class GeniusLyricsImporter(
                         mutableProgress.update { it.copy(message = "Add your Genius API token first.") }
                         return
                     }
-                    is GeniusFetchResult.Failed -> consecutiveErrors++
+                    is GeniusFetchResult.Failed -> { failed++; processed++; consecutiveErrors++ }
                 }
-                val stats = store.stats()
                 mutableProgress.update {
-                    it.copy(processed = index + 1, found = stats.success, notFound = stats.notFound,
-                        failed = stats.errors + stats.rateLimited + stats.blocked, bytesStored = stats.bytes)
+                    it.copy(processed = processed, found = found, notFound = notFound,
+                        failed = failed, bytesStored = store.stats().bytes)
                 }
                 if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
                     mutableProgress.update { it.copy(message = "Import paused after repeated network errors.") }
