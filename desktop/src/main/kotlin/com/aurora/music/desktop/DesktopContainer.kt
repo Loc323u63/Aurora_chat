@@ -8,6 +8,9 @@ import com.aurora.music.data.DEFAULT_SOURCE_PRIORITY
 import com.aurora.music.data.DEFAULT_SQUIG_BASE
 import com.aurora.music.data.DEFAULT_SQUIG_TARGET
 import com.aurora.music.data.DownloadManager
+import com.aurora.music.data.GeniusLyricsClient
+import com.aurora.music.data.GeniusLyricsImporter
+import com.aurora.music.data.GeniusLyricsStore
 import com.aurora.music.data.LastfmScrobbler
 import com.aurora.music.data.ListenBrainzScrobbler
 import com.aurora.music.data.LocalStore
@@ -118,6 +121,7 @@ class DesktopContainer(
     private val acoustIdKey = settingsStore.acoustIdKey.stateIn(scope, SharingStarted.Eagerly, "")
     val acoustId by lazy { com.aurora.music.data.remote.AcoustIdClient(apiKeyProvider = { acoustIdKey.value }, base = http) }
     private val localStore = LocalStore(paths.roaming)
+    val geniusLyricsStore = GeniusLyricsStore(paths.local)
     val listeningLevels = com.aurora.music.data.listening.ListeningLevelStore(java.io.File(paths.local, "listening_levels.json"), settingsStore.processingRoutes)
     val backupManager = BackupManager(settingsStore, localStore, playHistory, paths.roaming, paths.cache, listeningLevels)
 
@@ -290,12 +294,21 @@ class DesktopContainer(
     private val discordDelegate = lazy { com.aurora.music.data.DiscordRpc(settingsStore, scope, discordUser) { url -> com.aurora.music.desktop.player.artworkBytes(url, http, artworkRepository) } }
     val discord by discordDelegate
 
+    val geniusLyricsClient by lazy {
+        GeniusLyricsClient(geniusLyricsStore, tokenProvider = { settingsStore.geniusToken.first() }, http = http)
+    }
+    val geniusLyricsImporter by lazy {
+        GeniusLyricsImporter(geniusLyricsStore, geniusLyricsClient,
+            tokenProvider = { settingsStore.geniusToken.first() },
+            songsProvider = { repository.allLibrarySongs(cap = Int.MAX_VALUE) })
+    }
     val lyricsRepository by lazy {
         LyricsRepository(backendProvider = { backend }, lrclibEnabledProvider = { lrclibEnabled.value },
             separatorsProvider = { settingsStore.artistSeparators.first() },
             orderProvider = { settingsStore.lyricsSources.first() },
             spotifyAllowed = { type -> settingsStore.mergeFeatures.first().lyricsFor(type) },
-            http = http.newBuilder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).build())
+            http = http.newBuilder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).build(),
+            geniusLyricsProvider = geniusLyricsClient::lyricsFor)
     }
 
     val artworkRepository by lazy {

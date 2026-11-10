@@ -16,6 +16,8 @@ interface IntegrationSettings {
     val lastfmPendingToken: Flow<String>
     val lastfmArtistRules: Flow<List<ScrobbleArtistRule>>
     val listenBrainz: Flow<ListenBrainzAccount>
+    val geniusToken: Flow<String>
+    suspend fun setGeniusToken(v: String): Preferences
     val acoustIdKey: Flow<String>
     val squigBaseUrl: Flow<String>
     suspend fun setSquigBaseUrl(v: String): Preferences
@@ -79,6 +81,11 @@ internal class IntegrationSettingsStore(private val dataStore: DataStore<Prefere
             enabled = p[Keys.LISTENBRAINZ_ENABLED] ?: true,
         )
     }.distinctUntilChanged()
+
+    override val geniusToken: Flow<String> = dataStore.data.map { it[Keys.GENIUS_TOKEN].orEmpty() }.distinctUntilChanged()
+    override suspend fun setGeniusToken(v: String) = dataStore.edit { p ->
+        if (v.isBlank()) p.remove(Keys.GENIUS_TOKEN) else p[Keys.GENIUS_TOKEN] = v.trim()
+    }
 
     override val acoustIdKey: Flow<String> = dataStore.data.map { it[Keys.ACOUSTID_KEY] ?: "" }.distinctUntilChanged()
 

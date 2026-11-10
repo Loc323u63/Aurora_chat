@@ -42,6 +42,7 @@ class LyricsRepository(
     // whether spotify may supply lyrics for songs of this kind of source, its own songs included
     private val spotifyAllowed: suspend (ServerType?) -> Boolean = { true },
     private val clock: () -> Long = System::currentTimeMillis,
+    private val geniusLyricsProvider: suspend (Song) -> Lyrics? = { null },
 ) {
     private val gson = Gson()
     private val cache = object : LinkedHashMap<List<Any?>, CachedLyrics>(32, 0.75f, true) {
@@ -76,6 +77,7 @@ class LyricsRepository(
                 "server" -> if (type == ServerType.SPOTIFY && !spotify) null else attempt(onError) { backend?.serverLyrics(song) }
                 "spotify" -> if (spotify) attempt(onError) { backend?.catalogueLyrics(song) } else null
                 "lrclib" -> if (lrclib) fetchLrcLib(song, onError) else null
+                "genius" -> attempt { geniusLyricsProvider(song) }.also { if (it == null) failed = true }
                 else -> null
             }
             if (found == null) { emptied = true; continue }

@@ -82,6 +82,7 @@ class AppContainer(context: Context) {
         trackCoversProvider = { settingsStore.trackCovers.first() },
         foldersProvider = { settingsStore.localFolders.first() to settingsStore.localExcludedFolders.first() })
     private val localStore = LocalStore(appContext.filesDir)
+    val geniusLyricsStore = GeniusLyricsStore(appContext.noBackupFilesDir)
     private val localIndexRequested = java.util.concurrent.atomic.AtomicBoolean(false)
 
     val replayGainScanner = ReplayGainScanner(localLibrary, replayGainStore)
@@ -322,12 +323,21 @@ class AppContainer(context: Context) {
 
     private val lrclibEnabled = settingsStore.lrclibEnabled.stateIn(scope, SharingStarted.Eagerly, true)
 
+    val geniusLyricsClient by lazy {
+        GeniusLyricsClient(geniusLyricsStore, tokenProvider = { settingsStore.geniusToken.first() }, http = http)
+    }
+    val geniusLyricsImporter by lazy {
+        GeniusLyricsImporter(geniusLyricsStore, geniusLyricsClient,
+            tokenProvider = { settingsStore.geniusToken.first() },
+            songsProvider = { repository.allLibrarySongs(cap = Int.MAX_VALUE) })
+    }
     val lyricsRepository by lazy {
         LyricsRepository(backendProvider = { backend }, lrclibEnabledProvider = { lrclibEnabled.value },
             separatorsProvider = { settingsStore.artistSeparators.first() },
             orderProvider = { settingsStore.lyricsSources.first() },
             spotifyAllowed = { type -> settingsStore.mergeFeatures.first().lyricsFor(type) },
-            http = http.newBuilder().connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS).readTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build())
+            http = http.newBuilder().connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS).readTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build(),
+            geniusLyricsProvider = geniusLyricsClient::lyricsFor)
     }
 
     @Volatile

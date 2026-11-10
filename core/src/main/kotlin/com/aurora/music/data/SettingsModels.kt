@@ -30,7 +30,7 @@ data class MergeFeatures(
 }
 
 // "server" is the song's own source; the first synced result in this order wins, else the first with any lyrics
-val DEFAULT_LYRICS_SOURCES = listOf("server", "spotify", "lrclib")
+val DEFAULT_LYRICS_SOURCES = listOf("server", "spotify", "lrclib", "genius")
 
 enum class ServerType {
     SUBSONIC, JELLYFIN, SPOTIFY, LOCAL, EXTENSION, YOUTUBE_MUSIC, PLEX, SOUNDCLOUD;

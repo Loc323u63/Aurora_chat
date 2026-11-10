@@ -19,6 +19,7 @@ dependencies {
     api(libs.retrofit)
     api(libs.retrofit.gson)
     api(libs.gson)
+    implementation(libs.jsoup)
     api(libs.androidx.datastore.preferences.core)
     implementation(libs.jaudiotagger)
     // the android and desktop builds each bring their own runtime with the same api

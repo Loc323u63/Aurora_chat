@@ -26,7 +26,7 @@ class BackupCredentialsTest {
         "saved_sessions" to Gson().toJson(listOf(
             Session("https://music.example", "alice", "SECRET-saved-salt", "SECRET-saved-token"),
             Session("local", "Me", "", "local", ServerType.LOCAL))),
-        "acoustid_key" to "SECRET-acoustid", "lastfm_sk" to "SECRET-lastfm-sk", "lastfm_api_key" to "SECRET-lastfm-key",
+        "acoustid_key" to "SECRET-acoustid", "genius_api_token" to "SECRET-genius", "lastfm_sk" to "SECRET-lastfm-sk", "lastfm_api_key" to "SECRET-lastfm-key",
         "lastfm_secret" to "SECRET-lastfm-secret", "lastfm_pending_token" to "SECRET-lastfm-pending",
         "listenbrainz_token" to "SECRET-listenbrainz", "discord_token" to "SECRET-discord",
     )
@@ -55,6 +55,7 @@ class BackupCredentialsTest {
         assertEquals("DEVICE-token", prefs.strings["token"])
         assertEquals("DEVICE-sk", prefs.strings["lastfm_sk"])
         assertEquals("SECRET-discord", prefs.strings["discord_token"])
+        assertEquals("SECRET-genius", prefs.strings["genius_api_token"])
         assertTrue(prefs.strings.getValue("saved_sessions").contains("SECRET-saved-token"))
     }
 
