@@ -86,7 +86,7 @@ class GeniusLyricsStore(root: File) {
     fun record(songId: String): GeniusLyricsRecord? = synchronized(lock) { entries[songId] }
 
     fun hasLyrics(songId: String): Boolean = synchronized(lock) {
-        entries[songId]?.status == GeniusLyricsStatus.SUCCESS && lyricsFile(songId).isFile
+        entries[songId]?.status == GeniusLyricsStatus.SUCCESS && lyricsFile(songId).let { it.isFile && it.length() > 0L }
     }
 
     fun lyrics(songId: String): String? = synchronized(lock) {
@@ -173,7 +173,7 @@ class GeniusLyricsClient(
     suspend fun lyricsFor(song: Song): Lyrics? {
         store.lyrics(song.id)?.let { return toLyrics(it) }
         // A stored miss or refusal is not retried on each playback. The importer is the retry path.
-        if (store.record(song.id) != null) return null
+        if (store.record(song.id)?.status?.let { it != GeniusLyricsStatus.SUCCESS } == true) return null
         val token = tokenProvider().trim()
         if (token.isBlank()) return null
         return when (val result = fetchAndStore(song, token)) {
