@@ -89,10 +89,6 @@ class GeniusLyricsStore(root: File) {
         entries[songId]?.status == GeniusLyricsStatus.SUCCESS && lyricsFile(songId).isFile
     }
 
-    fun hasLyrics(songId: String): Boolean = synchronized(lock) {
-        entries[songId]?.status == GeniusLyricsStatus.SUCCESS && lyricsFile(songId).isFile
-    }
-
     fun lyrics(songId: String): String? = synchronized(lock) {
         val record = entries[songId] ?: return@synchronized null
         if (record.status != GeniusLyricsStatus.SUCCESS) return@synchronized null
