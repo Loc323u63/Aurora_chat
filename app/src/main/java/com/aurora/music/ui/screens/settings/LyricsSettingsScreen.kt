@@ -139,6 +139,16 @@ fun LyricsSettingsScreen(contentPadding: PaddingValues, onBack: () -> Unit) {
                     enabled = progress.running,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                 ) { Text("Stop import") }
+                Button(
+                    onClick = {
+                        scope.launch {
+                            store.setGeniusToken("")
+                            tokenEdit = ""
+                        }
+                    },
+                    enabled = !progress.running && (tokenEdit ?: geniusToken).isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                ) { Text("Clear Genius token") }
             }
         }
     }
