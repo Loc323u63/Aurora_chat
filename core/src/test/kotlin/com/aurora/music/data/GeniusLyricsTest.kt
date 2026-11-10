@@ -1,6 +1,7 @@
 package com.aurora.music.data
 
 import com.aurora.music.model.Song
+import com.google.gson.Gson
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -8,6 +9,9 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.IOException
+import java.io.File
 import java.nio.file.Files
 
 class GeniusLyricsTest {
@@ -64,4 +68,71 @@ class GeniusLyricsTest {
         assertTrue(DEFAULT_LYRICS_SOURCES.contains("genius"))
         assertNotNull(DEFAULT_LYRICS_SOURCES.indexOf("genius").takeIf { it >= 0 })
     }
+    @Test fun indexJournalCompactsRepeatedStatusWritesAndIgnoresAnIncompleteTail() {
+        val directory = Files.createTempDirectory("genius-journal-test").toFile()
+        try {
+            val store = GeniusLyricsStore(directory)
+            repeat(520) { index ->
+                store.mark("same-song", if (index % 2 == 0) GeniusLyricsStatus.ERROR else GeniusLyricsStatus.PENDING)
+            }
+            val journal = File(directory, "genius-lyrics-index.jsonl")
+            assertTrue(journal.isFile)
+            assertTrue("Repeated status changes should compact the journal", journal.readLines().size < 20)
+
+            // A process can stop between writing the JSON and its final newline.
+            journal.appendText("{")
+            val restored = GeniusLyricsStore(directory)
+            assertEquals(GeniusLyricsStatus.PENDING, restored.record("same-song")?.status)
+            restored.mark("another-song", GeniusLyricsStatus.NOT_FOUND)
+            val reopened = GeniusLyricsStore(directory)
+            assertEquals(GeniusLyricsStatus.PENDING, reopened.record("same-song")?.status)
+            assertEquals(GeniusLyricsStatus.NOT_FOUND, reopened.record("another-song")?.status)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test fun migratesTheLegacyJsonIndexWithoutLosingStatuses() {
+        val directory = Files.createTempDirectory("genius-legacy-index-test").toFile()
+        try {
+            val legacy = File(directory, "genius-lyrics-index.json")
+            val oldRecord = GeniusLyricsRecord(
+                status = GeniusLyricsStatus.SUCCESS,
+                geniusUrl = "https://genius.com/example-song-lyrics",
+                updatedAt = 123L,
+            )
+            legacy.writeText(Gson().toJson(linkedMapOf("legacy-song" to oldRecord)), Charsets.UTF_8)
+
+            val migrated = GeniusLyricsStore(directory)
+            assertEquals(oldRecord, migrated.record("legacy-song"))
+            assertTrue(File(directory, "genius-lyrics-index.jsonl").isFile)
+            assertFalse("The old index can be removed after a successful migration", legacy.exists())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test fun boundedUtf8ReaderHonoursLimitWithoutContentLength() {
+        val text = "Кот"
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        assertEquals(text, readUtf8Limited(ByteArrayInputStream(bytes), bytes.size))
+
+        try {
+            readUtf8Limited(ByteArrayInputStream(bytes), bytes.size - 1)
+            throw AssertionError("Expected an oversized response to be rejected")
+        } catch (_: IOException) {
+            // Expected: the reader requests at most maxBytes + 1 bytes before rejecting.
+        }
+    }
+
+    @Test fun storeConstructionDoesNotCreateLyricsDirectory() {
+        val directory = Files.createTempDirectory("genius-lazy-store-test").toFile()
+        try {
+            GeniusLyricsStore(directory)
+            assertFalse(File(directory, "genius-lyrics").exists())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
 }

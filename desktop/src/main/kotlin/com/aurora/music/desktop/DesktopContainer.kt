@@ -121,7 +121,7 @@ class DesktopContainer(
     private val acoustIdKey = settingsStore.acoustIdKey.stateIn(scope, SharingStarted.Eagerly, "")
     val acoustId by lazy { com.aurora.music.data.remote.AcoustIdClient(apiKeyProvider = { acoustIdKey.value }, base = http) }
     private val localStore = LocalStore(paths.roaming)
-    val geniusLyricsStore = GeniusLyricsStore(paths.local)
+    val geniusLyricsStore by lazy { GeniusLyricsStore(paths.local) }
     val listeningLevels = com.aurora.music.data.listening.ListeningLevelStore(java.io.File(paths.local, "listening_levels.json"), settingsStore.processingRoutes)
     val backupManager = BackupManager(settingsStore, localStore, playHistory, paths.roaming, paths.cache, listeningLevels)
 

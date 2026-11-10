@@ -82,7 +82,7 @@ class AppContainer(context: Context) {
         trackCoversProvider = { settingsStore.trackCovers.first() },
         foldersProvider = { settingsStore.localFolders.first() to settingsStore.localExcludedFolders.first() })
     private val localStore = LocalStore(appContext.filesDir)
-    val geniusLyricsStore = GeniusLyricsStore(appContext.noBackupFilesDir)
+    val geniusLyricsStore by lazy { GeniusLyricsStore(appContext.noBackupFilesDir) }
     private val localIndexRequested = java.util.concurrent.atomic.AtomicBoolean(false)
 
     val replayGainScanner = ReplayGainScanner(localLibrary, replayGainStore)

@@ -25,11 +25,22 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
+import java.io.RandomAccessFile
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+
+private val GENIUS_ARTIST_SEPARATORS = Regex("(?i),|;|&|\\||/|\\b(?:feat\\.?|ft\\.?|featuring|with)\\b|\\s+[x×]\\s+")
+private val GENIUS_DIACRITICS = Regex("\\p{M}+")
+private val GENIUS_NON_ALPHANUMERIC = Regex("[^\\p{L}\\p{N}]+")
+private val GENIUS_LYRICS_TRAILING_SPACES = Regex("[ \\t]+\\n")
+private val GENIUS_LYRICS_EXCESS_NEWLINES = Regex("\\n{3,}")
+private val GENIUS_LYRICS_BLOCK_TAGS = setOf("div", "p", "section", "ul", "ol", "li")
+private val GENIUS_LYRICS_IGNORED_TAGS = setOf("script", "style", "noscript")
 
 enum class GeniusLyricsStatus { PENDING, SUCCESS, NOT_FOUND, ERROR, RATE_LIMITED, BLOCKED }
 
@@ -69,19 +80,51 @@ data class GeniusImportProgress(
  * URLs, so loading it never pulls the lyric contents for the whole library into memory.
  */
 class GeniusLyricsStore(root: File) {
-    private val directory = File(root, "genius-lyrics").apply { mkdirs() }
-    private val indexFile = File(root, "genius-lyrics-index.json")
+    private val directory = File(root, "genius-lyrics")
+    private val indexFile = File(root, "genius-lyrics-index.jsonl")
+    private val legacyIndexFile = File(root, "genius-lyrics-index.json")
     private val gson = Gson()
     private val lock = Any()
-    private val entries: LinkedHashMap<String, GeniusLyricsRecord> = loadIndex()
+    private var indexLines = 0
+    private var legacyMigrationPending = false
+    private val entries: LinkedHashMap<String, GeniusLyricsRecord> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { loadIndex() }
 
-    private fun loadIndex(): LinkedHashMap<String, GeniusLyricsRecord> = runCatching {
-        if (!indexFile.isFile) return LinkedHashMap()
-        gson.fromJson<LinkedHashMap<String, GeniusLyricsRecord>>(
-            indexFile.readText(Charsets.UTF_8),
-            object : TypeToken<LinkedHashMap<String, GeniusLyricsRecord>>() {}.type,
-        ) ?: LinkedHashMap()
-    }.getOrDefault(LinkedHashMap())
+    private data class IndexEntry(
+        val songId: String = "",
+        val record: GeniusLyricsRecord? = null,
+    )
+
+    /**
+     * Read the latest record for each song from an append-only journal. A legacy JSON map is
+     * imported once so existing local lyrics are kept when upgrading from the first implementation.
+     */
+    private fun loadIndex(): LinkedHashMap<String, GeniusLyricsRecord> {
+        val loaded = LinkedHashMap<String, GeniusLyricsRecord>()
+        if (indexFile.isFile) {
+            runCatching {
+                indexFile.forEachLine(Charsets.UTF_8) { line ->
+                    indexLines++
+                    val entry = runCatching { gson.fromJson(line, IndexEntry::class.java) }.getOrNull()
+                    val record = entry?.record
+                    if (!entry?.songId.isNullOrBlank() && record != null) loaded[entry!!.songId] = record
+                }
+            }
+            return loaded
+        }
+
+        if (!legacyIndexFile.isFile) return loaded
+        val legacyType = object : TypeToken<LinkedHashMap<String, GeniusLyricsRecord>>() {}.type
+        val migrated = runCatching {
+            gson.fromJson<LinkedHashMap<String, GeniusLyricsRecord>>(legacyIndexFile.readText(Charsets.UTF_8), legacyType)
+        }.getOrNull().orEmpty()
+        if (migrated.isNotEmpty()) {
+            val migration = runCatching { persistIndexSnapshot(migrated) }
+            legacyMigrationPending = migration.isFailure
+            if (migration.isSuccess) legacyIndexFile.delete()
+        }
+        loaded.putAll(migrated)
+        return loaded
+    }
 
     fun record(songId: String): GeniusLyricsRecord? = synchronized(lock) { entries[songId] }
 
@@ -103,21 +146,23 @@ class GeniusLyricsStore(root: File) {
         val target = lyricsFile(songId)
         target.parentFile?.mkdirs()
         persistBackupFileAtomically(target, text.toByteArray(Charsets.UTF_8))
-        entries[songId] = GeniusLyricsRecord(GeniusLyricsStatus.SUCCESS, url, "", System.currentTimeMillis())
-        persistIndex()
+        val record = GeniusLyricsRecord(GeniusLyricsStatus.SUCCESS, url, "", System.currentTimeMillis())
+        entries[songId] = record
+        appendIndexEntry(songId, record)
     }
 
     fun mark(songId: String, status: GeniusLyricsStatus, url: String = "", message: String = "") = synchronized(lock) {
         require(songId.isNotBlank())
         val previous = entries[songId]
-        entries[songId] = GeniusLyricsRecord(
+        val record = GeniusLyricsRecord(
             status = status,
             geniusUrl = url.ifBlank { previous?.geniusUrl.orEmpty() },
             message = message.take(240),
             updatedAt = System.currentTimeMillis(),
         )
+        entries[songId] = record
         if (status != GeniusLyricsStatus.SUCCESS) lyricsFile(songId).takeIf(File::exists)?.delete()
-        persistIndex()
+        appendIndexEntry(songId, record)
     }
 
     fun stats(): GeniusLyricsStoreStats = synchronized(lock) {
@@ -138,17 +183,64 @@ class GeniusLyricsStore(root: File) {
         directory.mkdirs()
         entries.clear()
         indexFile.delete()
+        legacyIndexFile.delete()
+        indexLines = 0
+        legacyMigrationPending = false
     }
 
-    private fun persistIndex() {
+    private fun appendIndexEntry(songId: String, record: GeniusLyricsRecord) {
+        if (legacyMigrationPending) {
+            persistIndexSnapshot(entries)
+            legacyMigrationPending = false
+            legacyIndexFile.delete()
+            return
+        }
         indexFile.parentFile?.mkdirs()
-        persistBackupFileAtomically(indexFile, gson.toJson(entries).toByteArray(Charsets.UTF_8))
+        ensureJournalEndsWithNewline()
+        indexFile.appendText(gson.toJson(IndexEntry(songId, record)) + "\n", Charsets.UTF_8)
+        indexLines++
+        // Rewrite only when old versions of the same song dominate the append-only journal.
+        if (indexLines >= INDEX_COMPACT_MIN_LINES && indexLines > entries.size * INDEX_COMPACT_RATIO) {
+            persistIndexSnapshot(entries)
+        }
+    }
+
+    private fun ensureJournalEndsWithNewline() {
+        if (!indexFile.isFile || indexFile.length() == 0L) return
+        val isTerminated = RandomAccessFile(indexFile, "r").use { file ->
+            file.seek(file.length() - 1L)
+            file.read() == '\n'.code
+        }
+        if (!isTerminated) indexFile.appendText("\n", Charsets.UTF_8)
+    }
+
+    private fun persistIndexSnapshot(snapshot: Map<String, GeniusLyricsRecord>) {
+        indexFile.parentFile?.mkdirs()
+        val contents = buildString {
+            snapshot.forEach { (songId, record) ->
+                append(gson.toJson(IndexEntry(songId, record))).append('\n')
+            }
+        }
+        persistBackupFileAtomically(indexFile, contents.toByteArray(Charsets.UTF_8))
+        indexLines = snapshot.size
     }
 
     private fun lyricsFile(songId: String): File {
-        val hash = MessageDigest.getInstance("SHA-256").digest(songId.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
+        val digest = MessageDigest.getInstance("SHA-256").digest(songId.toByteArray(Charsets.UTF_8))
+        val hash = buildString(digest.size * 2) {
+            digest.forEach { byte ->
+                val value = byte.toInt() and 0xff
+                append(HEX_DIGITS[value ushr 4])
+                append(HEX_DIGITS[value and 0x0f])
+            }
+        }
         return File(directory, hash + ".txt")
+    }
+
+    private companion object {
+        const val HEX_DIGITS = "0123456789abcdef"
+        const val INDEX_COMPACT_MIN_LINES = 512
+        const val INDEX_COMPACT_RATIO = 2
     }
 }
 
@@ -273,17 +365,16 @@ class GeniusLyricsClient(
         if (titleScore == 0) return 0
         val wantedArtist = normalize(song.artist)
         val foundArtist = normalize(candidateArtist)
-        val creditedArtists = (listOf(wantedArtist) + song.artist.split(
-            Regex("(?i),|;|&|\\||/|\\b(?:feat\\.?|ft\\.?|featuring|with)\\b|\\s+[x×]\\s+")
-        ).map(::normalize)).filter(String::isNotBlank).toSet()
+        val creditedArtists = (listOf(wantedArtist) + song.artist.split(GENIUS_ARTIST_SEPARATORS))
+            .map(::normalize).filter(String::isNotBlank).toSet()
         val artistScore = if (foundArtist.isNotBlank() && foundArtist in creditedArtists) 100 else 0
         return titleScore + artistScore
     }
 
     private fun normalize(value: String): String = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFKD)
-        .replace(Regex("\\p{M}+"), "")
+        .replace(GENIUS_DIACRITICS, "")
         .lowercase(java.util.Locale.ROOT)
-        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .replace(GENIUS_NON_ALPHANUMERIC, " ")
         .trim()
 
     private fun isGeniusSongUrl(value: String): Boolean = runCatching {
@@ -293,9 +384,10 @@ class GeniusLyricsClient(
     }.getOrDefault(false)
 
     private fun isAccessChallenge(html: String): Boolean {
-        val lower = html.lowercase()
-        return "captcha-container" in lower || "cf-challenge" in lower ||
-            "<title>access denied" in lower || "verify you are human" in lower
+        return html.contains("captcha-container", ignoreCase = true) ||
+            html.contains("cf-challenge", ignoreCase = true) ||
+            html.contains("<title>access denied", ignoreCase = true) ||
+            html.contains("verify you are human", ignoreCase = true)
     }
 
     private fun requestPage(url: String): Page {
@@ -307,7 +399,9 @@ class GeniusLyricsClient(
         http.newCall(request).execute().use { response ->
             val length = response.body?.contentLength() ?: -1L
             if (length > MAX_RESPONSE_BYTES) throw IOException("Genius response is too large")
-            val body = response.body?.string().orEmpty()
+            val body = response.body?.byteStream()?.use { input ->
+                readUtf8Limited(input, MAX_RESPONSE_BYTES.toInt())
+            }.orEmpty()
             return Page(response.code, body, response.header("Retry-After")?.toLongOrNull())
         }
     }
@@ -317,15 +411,14 @@ class GeniusLyricsClient(
         val containers = document.select("div[data-lyrics-container=true]")
         if (containers.isEmpty()) return null
         val text = containers.joinToString("\n") { renderLyricsBlock(it) }
-            .replace(Regex("[ \\t]+\\n"), "\n")
-            .replace(Regex("\\n{3,}"), "\n\n")
+            .replace(GENIUS_LYRICS_TRAILING_SPACES, "\n")
+            .replace(GENIUS_LYRICS_EXCESS_NEWLINES, "\n\n")
             .trim()
         return text.takeIf { it.isNotBlank() }
     }
 
     private fun renderLyricsBlock(root: Element): String {
         val output = StringBuilder()
-        val blockTags = setOf("div", "p", "section", "ul", "ol", "li")
         fun newline() {
             while (output.isNotEmpty() && output.last() == ' ') output.setLength(output.length - 1)
             if (output.isNotEmpty() && output.last() != '\n') output.append('\n')
@@ -335,11 +428,11 @@ class GeniusLyricsClient(
                 is TextNode -> output.append(node.wholeText)
                 is Element -> {
                     val tag = node.normalName()
-                    if (tag in setOf("script", "style", "noscript")) return
+                    if (tag in GENIUS_LYRICS_IGNORED_TAGS) return
                     if (tag == "br") {
                         newline()
                     } else {
-                        val block = tag in blockTags
+                        val block = tag in GENIUS_LYRICS_BLOCK_TAGS
                         if (block) newline()
                         node.childNodes().forEach(::visit)
                         if (block) newline()
@@ -362,6 +455,31 @@ class GeniusLyricsClient(
         private const val MAX_RESPONSE_BYTES = 2L * 1024L * 1024L
     }
 }
+
+/** Reads no more than maxBytes + 1 bytes, even when the HTTP body has no Content-Length. */
+internal fun readUtf8Limited(input: InputStream, maxBytes: Int): String {
+    require(maxBytes >= 0 && maxBytes < Int.MAX_VALUE)
+    val output = ByteArrayOutputStream(minOf(maxBytes + 1, READ_BUFFER_BYTES))
+    val buffer = ByteArray(READ_BUFFER_BYTES)
+    while (true) {
+        val remaining = maxBytes + 1 - output.size()
+        if (remaining <= 0) break
+        val count = input.read(buffer, 0, minOf(buffer.size, remaining))
+        if (count < 0) break
+        if (count == 0) {
+            val single = input.read()
+            if (single < 0) break
+            output.write(single)
+            continue
+        }
+        output.write(buffer, 0, count)
+    }
+    val bytes = output.toByteArray()
+    if (bytes.size > maxBytes) throw IOException("Genius response is too large")
+    return String(bytes, Charsets.UTF_8)
+}
+
+private const val READ_BUFFER_BYTES = 8 * 1024
 
 class GeniusLyricsImporter(
     private val store: GeniusLyricsStore,

@@ -22,6 +22,8 @@ Requires **Android 8.0 or newer** on a 64-bit device. Aurora is actively develop
 
 [Explore everyday playback](#the-everyday-comforts) · [Explore sound controls](#sound-controls)
 
+Technical notes for this fork: [Genius lyrics integration, storage and performance](README_GENIUS_RU.md).
+
 ## Screenshots
 
 <table>
