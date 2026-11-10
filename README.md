@@ -24,6 +24,8 @@ Requires **Android 8.0 or newer** on a 64-bit device. Aurora is actively develop
 
 Technical notes for this fork: [Genius lyrics integration, storage and performance](README_GENIUS_RU.md).
 
+Инструкция на русском: [как установить и собрать Android- и Windows-версии](BUILD_RU.md).
+
 ## Screenshots
 
 <table>
