@@ -146,7 +146,7 @@ fun LyricsSettingsScreen(contentPadding: PaddingValues, onBack: () -> Unit) {
                             tokenEdit = ""
                         }
                     },
-                    enabled = !progress.running && (tokenEdit ?: geniusToken).isNotBlank(),
+                    enabled = !progress.running && (tokenEdit != null || geniusToken.isNotBlank()),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 ) { Text("Clear Genius token") }
             }
