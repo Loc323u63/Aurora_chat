@@ -6,7 +6,7 @@ An Android music player built for everyday listening and detailed audio customiz
 
 Bring local files, home music servers and YouTube Music together, or browse your Green Music App library in its own mode. Press play with the default sound, choose a headphone preset, or build your own processing chain. No Aurora account is required.
 
-**[Download APK](https://github.com/nessli420/aurora/releases/latest)** · [Features](#features) · [Screenshots](#screenshots) · [Tablet](#tablet) · [Windows](#windows-desktop) · [Linux](#linux-desktop) · [Build from source](#build-from-source) · [Report an issue](https://github.com/nessli420/aurora/issues/new/choose) · [Contribute](CONTRIBUTING.md)
+**[Build this fork](BUILD_RU.md)** · [Upstream APK releases](https://github.com/nessli420/aurora/releases/latest) · [Features](#features) · [Screenshots](#screenshots) · [Tablet](#tablet) · [Windows](#windows-desktop) · [Linux](#linux-desktop) · [Build from source](#build-from-source) · [Report an issue](https://github.com/nessli420/aurora/issues/new/choose) · [Contribute](CONTRIBUTING.md)
 
 Requires **Android 8.0 or newer** on a 64-bit device. Aurora is actively developed; the source may include changes that are not in the latest release yet.
 
@@ -297,7 +297,7 @@ Bug reports, code fixes, feature ideas and documentation improvements are welcom
 <details>
 <summary>Requirements and build steps</summary>
 
-Use **JDK 21**, **Android SDK 35**, **NDK 27.0.12077973**, and **CMake 3.22.1**. Build with the included Gradle wrapper.
+Use **JDK 21**, **Android SDK 36**, **NDK 27.0.12077973**, and **CMake 3.22.1**. Build with the included Gradle wrapper.
 
 1. Clone this repository and open it in Android Studio. The native libraries are included; no submodule setup is needed.
 2. Set the SDK location in `local.properties` if Android Studio has not created it:
